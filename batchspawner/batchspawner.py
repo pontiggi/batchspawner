@@ -36,6 +36,16 @@ from jupyterhub.utils import random_port
 from jupyterhub.spawner import set_user_setuid
 import jupyterhub
 
+from port_range import PortRange
+def ports_in_range(range1,range2):
+    range1 = PortRange(range1).bounds
+    range2 = PortRange(range2).bounds
+    return range1[0] >= range2[0] and range1[1] <= range2[1] 
+
+def random_port_inrange(range1):
+    import random
+    return random.randint(PortRange(range1).port_from,PortRange(range1).port_to) 
+
 
 def format_template(template, *args, **kwargs):
     """Format a template, either using jinja2 or str.format().
@@ -77,6 +87,9 @@ class BatchSpawnerBase(Spawner):
 
     # override default server ip since batch jobs normally running remotely
     ip = Unicode("0.0.0.0", help="Address for singleuser server to listen at").tag(config=True)
+
+    # set a  port range in case there are network restrictions in the compute network
+    ports = Unicode("0", help="port range accessible for connections between hub and compute resources").tag(config=True)
 
     exec_prefix = Unicode('sudo -E -u {username}', \
         help="Standard executon prefix (e.g. the default sudo -E -u {username})"
@@ -331,12 +344,20 @@ class BatchSpawnerBase(Spawner):
     @gen.coroutine
     def start(self):
         """Start the process"""
-        if self.user and self.user.server and self.user.server.port:
-            self.port = self.user.server.port
-            self.db.commit()
-        elif (jupyterhub.version_info < (0,7) and not self.user.server.port)  or \
-             (jupyterhub.version_info >= (0,7) and not self.port):
-            self.port = random_port()
+        if  not ports_in_range(self.ports,'32768-60999'):
+            self.log.info('failover to default port range')
+            if self.user and self.user.server and self.user.server.port:
+                self.port = self.user.server.port
+                self.db.commit()
+            elif (jupyterhub.version_info < (0,7) and not self.user.server.port)  or \
+                 (jupyterhub.version_info >= (0,7) and not self.port):
+                self.port = random_port()
+                self.db.commit()
+            self.log.info(self.port)
+        else : 
+            self.log.info('using specified port range')
+            self.port = random_port_inrange(self.ports)
+            self.log.info(self.port)
             self.db.commit()
         job = yield self.submit_batch_script()
 
